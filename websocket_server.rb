@@ -75,23 +75,27 @@ class WebsocketServer
 
   # Sends data via the websocket.
   def send( data )
-    # Data to send over:
-    to_send = [ 0b10000001 ]
+    # Final text data header:
+    header = 0b10000001
 
-    # Payload size to use:
+    # Payload size to use (data will always be unmasked):
     size = "#{data}".size
 
     # Standard payload:
     if size < 126 then
-      @connection.write [ 0b10000001, size, "#{data}" ].pack "CCA#{size}"
+      @connection.write [ header, size, "#{data}" ].pack "C2A#{size}"
 
-    # 16bit extended payload size:
+    # 16-bit extended payload:
     elsif size <= 65535 then
-      @connection.write [ 0b10000001, 126, size, "#{data}" ].pack "CCCA#{size}"
+      bytes = [ size ].pack( "S" ).unpack( "C2" ).reverse.map( &:to_i )
+      @connection.write [ header, 126, *bytes, "#{data}" ]
+        .pack "C4A#{size}"
 
-    # 32 bit extended payload size:
+    # 64-bit extended payload:
     else
-      @connection.write [ 0b10000001, 127, size, "#{data}" ].pack "CCCA#{size}"
+      bytes = [ size ].pack( "S" ).unpack( "C8" ).reverse.map( &:to_i )
+      @connection.write [ header, 127, *bytes, "#{data}" ]
+        .pack "C10A#{size}"
     end
   end
 
@@ -200,8 +204,41 @@ class WebsocketServer
   # Sends a pong message.
   def pong
     to_send = [ 0b10001010, 0, "" ]
-    @connection.write to_send.pack "CCA0"
+    @connection.write to_send.pack "C2A0"
   end
 
+end
+
+
+
+###############################################################################
+### Test logic                                                              ###
+###############################################################################
+
+if $0 == __FILE__ then
+  print "Initializing on port 4000... "
+  server = WebsocketServer.new 4000
+  puts "Server started!"
+
+  counter = 0
+  server.accept do |type, message|
+    puts "Connection accepted."
+
+    print "Reply #{counter}..."
+    case counter
+      when 0
+        server.send(  "100" + "A" * 100 + "Z" )
+
+      when 1
+        server.send( "1000" + "A" * 1000 + "Z" )
+
+      when 2
+        server.send( "70000" + "A" * 70000 + "Z" )
+    end
+    puts " Sent!"
+
+    counter += 1
+    break if 3 == counter
+  end
 end
 
